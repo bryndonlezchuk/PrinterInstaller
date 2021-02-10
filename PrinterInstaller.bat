@@ -1,5 +1,5 @@
 @echo off
-
+setlocal EnableDelayedExpansion
 
 ::TODO:
 ::Remote host
@@ -19,10 +19,13 @@ set HOST=localhost
 set INTERACTIVE=off
 set /A SUCCESS=0
 set /A FAILURE=0
+set /A SKIPPED=0
+
+prompt $G
 
 :: Retrieve arguments
 :GETOPTS
-	if /I "%1" == "-v" @echo on
+	if /I "%1" == "-x" @echo on
 	if /I "%1" == "-a" set ACTION=add
 	if /I "%1" == "-d" set ACTION=delete
 	if /I "%1" == "-f" call :SETFILE "%2"
@@ -37,24 +40,28 @@ if not "%1" == "" goto :GETOPTS
 ::Check for any errors in arguments
 if not errorlevel 0 goto :CLEANUP
 
-if %INTERACTIVE%==on (
-
-) else (
+if %INTERACTIVE%==on (echo Interactive on) else (
 	for /f "tokens=1-3 delims=," %%A IN (%CSVFILE%) do (
+		if "%%A"=="" goto :ENDLOOP
+		
 		if %ACTION%==add call :ADD "%%A", "%%B", "%%C"
 		if %ACTION%==delete call :DELETE "%%A", "%%B"
 		
+		:ENDLOOP
 		if not errorlevel 0 goto :CLEANUP
 	)
 )
 
 :CLEANUP
-if %ACTION%=add (
-	echo %SUCCESS% successfull installations
-	echo %FAILURE% failed installations
-) else if %ACTION%=delete (
+echo.
+if %ACTION%==add (
+	echo !SUCCESS! successfull installations
+	echo !FAILURE! failed installations
+	echo !SKIPPED! skipped installations
+) else if %ACTION%==delete (
 	echo %SUCCESS% successfull deletions
 	echo %FAILURE% failed deletions
+	echo %SKIPPED% skipped deletions
 )
 echo End of script
 
@@ -67,9 +74,10 @@ goto :EOF
 :: 	Input 2: Printer IP
 :: 	Input 3: Printer Driver
 :ADD
-	setlocal
-	echo ""
-	echo ""
+::	setlocal
+	echo.
+	echo.
+	echo ----------------------------------------
 	echo Adding printer "%~1" at IP %~2 with driver "%~3"
 	
 	cd %WINDIR%\System32\Printing_Admin_Scripts\en-US\
@@ -79,7 +87,7 @@ goto :EOF
 	if "%DRVRRESULT%"=="" (
 		::Driver not found
 		echo Driver "%~3" not found, skipping printer install
-		call :FAIL
+		call :SKIP
 		exit /b 0
 	) else (
 		::Driver is installed and found
@@ -89,10 +97,12 @@ goto :EOF
 	::Check for port
 	for /f "tokens=* USEBACKQ" %%F in (`cscript prnport.vbs -l ^| find "Port name %~2"`) do set PORTRESULT=%%F
 	if "%PORTRESULT%"=="" (
-		::Port not found
-		::Create the port
+	
+		REM Port not found
+		REM Create the port
+	
 		echo Port not found for "%~2", adding port
-		cscript prnport.vbs -a -r %~2 -h %~2 -o raw -n 9100
+		cscript prnport.vbs -a -r %~2 -h %~2 -o raw -n 9100 | find "Created"
 		
 		if not errorlevel 0 (
 			call :FAIL
@@ -102,20 +112,22 @@ goto :EOF
 	
 	::Install printer
 	echo Installing "%~1"
-	cscript prnmngr.vbs -a -p "%~1" -m "%~3" -r "%~2"
+	cscript prnmngr.vbs -a -p "%~1" -m "%~3" -r "%~2" | find "Added"
 	
 	if not errorlevel 0 (call :FAIL) else (call :PASS)
 	
-	endlocal
+	echo ----------------------------------------
+::	endlocal
 exit /b %ERRORLEVEL%
 
 ::Delete a printer from local machine
 :: 	Input 1: Printer Name
 :: 	Input 2: Printer IP
 :DELETE
-	setlocal
-	echo ""
-	echo ""
+::	setlocal
+	echo.
+	echo.
+	echo ----------------------------------------
 	
 	cd %WINDIR%\System32\Printing_Admin_Scripts\en-US\
 	
@@ -126,8 +138,8 @@ exit /b %ERRORLEVEL%
 		echo Printer "%~1" not found, checking port...
 	) else (
 		::Printer is present
-		echo Removing printer "%~1"
-		cscript prnmngr.vbs -d -p "%~1"
+		echo Removing printer "%~1"...
+		cscript prnmngr.vbs -d -p "%~1" | find "Deleted"
 		
 		if not errorlevel 0 (
 			call :FAIL
@@ -140,15 +152,17 @@ exit /b %ERRORLEVEL%
 	if "%PORTRESULT%"=="" (
 		::Port not present
 		echo Port "%~2" not found, skipping
+		call :SKIP
 	) else (
 		::Port is present
-		echo Removing port "%~2"
-		cscript prnport.vbs -d -r "%~2"
+		echo Removing port "%~2"...
+		cscript prnport.vbs -d -r "%~2" | find "Deleted"
 		
 		if not errorlevel 0 (call :FAIL) else (call :PASS)
 	)
 	
-	endlocal
+	echo ----------------------------------------
+::	endlocal
 exit /b %ERRORLEVEL%
 
 ::Set the host machine
@@ -160,24 +174,29 @@ exit /b %ERRORLEVEL%
 ::Set the filepath for the CSV file
 :: 	Input 1: CSV file to use
 :SETFILE
-	call :CHECKFILE %~1
-	set "CSVFILE=%~1
+	call :CHECKFILE "%~1"
+	set "CSVFILE=%~1"
 exit /b %ERRORLEVEL%
 
 ::Verify file existance
 :: 	Input 1: File to validate
 :CHECKFILE
-	if not exist %~1 call :EXITERROR "No such file"
+	if not exist "%~1" call :EXITERROR "No such file"
 exit /b %ERRORLEVEL%
 
-::Increment the success variable
+::Increment the success counter
 :PASS
-	set /A %SUCCESS%+=1
+	set /A SUCCESS+=1
 exit /b 0
 
-::Increment the failure variable
+::Increment the failure counter
 :FAIL
-	set /A %FAILURE%+=1
+	set /A FAILURE+=1
+exit /b 0
+
+::Increment the skipped counter
+:SKIP
+	set /A SKIPPED+=1
 exit /b 0
 
 ::Displays an error message and exits script (easier said than done)
