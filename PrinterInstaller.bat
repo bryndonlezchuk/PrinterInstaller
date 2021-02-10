@@ -1,14 +1,24 @@
 @echo off
-prompt $G
-title Printer Installer
 
+
+::TODO:
+::Remote host
+::Single printer add
+::Interactive mode
+::Config file
+
+
+set RUNDIR=%~dp0
+set RUNPROMPT=%PROMPT%
 set CSVFILE=
 set PRINTERNAME=
 set PRINTERIP=
 set PRINTERDRIVER=
 set ACTION=none
-set RUNDIR=%~dp0
 set HOST=localhost
+set INTERACTIVE=off
+set /A SUCCESS=0
+set /A FAILURE=0
 
 :: Retrieve arguments
 :GETOPTS
@@ -22,17 +32,34 @@ if not "%1" == "" goto :GETOPTS
 
 :: Main body of script goes here
 :MAIN
-if %ACTION%==none call :EXITERROR "Expecting add (-a) or delete (-d) argument"
-if not %ERRORLEVEL%==0 goto :EOF
-for /f "tokens=1-3 delims=," %%A IN (%CSVFILE%) do (
-	if %ACTION%==add call :ADD "%%A", "%%B", "%%C"
-	if %ACTION%==delete call :DELETE "%%A", "%%B"
-	
-	if not %ERRORLEVEL%==0 goto :EOF
+::if %ACTION%==none call :EXITERROR "Expecting add (-a) or delete (-d) argument"
+
+::Check for any errors in arguments
+if not errorlevel 0 goto :CLEANUP
+
+if %INTERACTIVE%==on (
+
+) else (
+	for /f "tokens=1-3 delims=," %%A IN (%CSVFILE%) do (
+		if %ACTION%==add call :ADD "%%A", "%%B", "%%C"
+		if %ACTION%==delete call :DELETE "%%A", "%%B"
+		
+		if not errorlevel 0 goto :CLEANUP
+	)
 )
 
-cd %RUNDIR%
+:CLEANUP
+if %ACTION%=add (
+	echo %SUCCESS% successfull installations
+	echo %FAILURE% failed installations
+) else if %ACTION%=delete (
+	echo %SUCCESS% successfull deletions
+	echo %FAILURE% failed deletions
+)
 echo End of script
+
+cd %RUNDIR%
+prompt %RUNPROMPT%
 goto :EOF
 
 ::Add a printer to local machine
@@ -50,25 +77,37 @@ goto :EOF
 	::Check for driver
 	for /f "tokens=* USEBACKQ" %%F in (`cscript prndrvr.vbs -l ^| find "%~3"`) do set DRVRRESULT=%%F
 	if "%DRVRRESULT%"=="" (
+		::Driver not found
 		echo Driver "%~3" not found, skipping printer install
+		call :FAIL
 		exit /b 0
 	) else (
+		::Driver is installed and found
 		echo Driver "%~3" is installed
 	)
 	
 	::Check for port
 	for /f "tokens=* USEBACKQ" %%F in (`cscript prnport.vbs -l ^| find "Port name %~2"`) do set PORTRESULT=%%F
 	if "%PORTRESULT%"=="" (
+		::Port not found
+		::Create the port
 		echo Port not found for "%~2", adding port
 		cscript prnport.vbs -a -r %~2 -h %~2 -o raw -n 9100
-	) else echo Port "%~2" already installed, skipping
+		
+		if not errorlevel 0 (
+			call :FAIL
+			exit /b %ERRORLEVEL%
+		)
+	) else echo Port "%~2" already created, skipping
 	
 	::Install printer
 	echo Installing "%~1"
 	cscript prnmngr.vbs -a -p "%~1" -m "%~3" -r "%~2"
 	
+	if not errorlevel 0 (call :FAIL) else (call :PASS)
+	
 	endlocal
-exit /b 0
+exit /b %ERRORLEVEL%
 
 ::Delete a printer from local machine
 :: 	Input 1: Printer Name
@@ -89,6 +128,11 @@ exit /b 0
 		::Printer is present
 		echo Removing printer "%~1"
 		cscript prnmngr.vbs -d -p "%~1"
+		
+		if not errorlevel 0 (
+			call :FAIL
+			exit /b %ERRORLEVEL%
+		)
 	)
 	
 	::Remove port
@@ -100,7 +144,11 @@ exit /b 0
 		::Port is present
 		echo Removing port "%~2"
 		cscript prnport.vbs -d -r "%~2"
+		
+		if not errorlevel 0 (call :FAIL) else (call :PASS)
 	)
+	
+	endlocal
 exit /b %ERRORLEVEL%
 
 ::Set the host machine
@@ -121,6 +169,16 @@ exit /b %ERRORLEVEL%
 :CHECKFILE
 	if not exist %~1 call :EXITERROR "No such file"
 exit /b %ERRORLEVEL%
+
+::Increment the success variable
+:PASS
+	set /A %SUCCESS%+=1
+exit /b 0
+
+::Increment the failure variable
+:FAIL
+	set /A %FAILURE%+=1
+exit /b 0
 
 ::Displays an error message and exits script (easier said than done)
 :: 	Input 1: Message
